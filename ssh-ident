@@ -557,7 +557,7 @@ def FindSSHConfig(identity, config):
     return False
 
 
-def GetSessionTty():
+def GetSessionTty(mode = "r"):
     """Returns a file descriptor for the session TTY, or None.
 
     In *nix systems, each process is tied to one session. Each
@@ -591,8 +591,8 @@ def GetSessionTty():
     None otherwise.
     """
     try:
-        fd = open("/dev/tty", "r")
-        fcntl.ioctl(fd, termios.TIOCGPGRP, "  ")
+        fd = open("/dev/tty", mode)
+        fcntl.ioctl(fd, termios.TIOCGPGRP, b"  ")
     except IOError:
         return None
     return fd
@@ -673,16 +673,17 @@ class AgentManager(object):
         Args:
           keys: iterable of strings, each string a path to a key to load.
         """
+        console_in = GetSessionTty("r")
+        console_out = GetSessionTty("w")
         keys = " ".join(keys)
         options = self.config.Get("SSH_ADD_OPTIONS").get(
             self.identity, self.config.Get("SSH_ADD_DEFAULT_OPTIONS")
         )
-        console = GetSessionTty()
         self.RunShellCommandInAgent(
             self.agent_file,
             "ssh-add {0} {1}".format(options, keys),
-            stdout=console,
-            stdin=console,
+            stdout=console_out,
+            stdin=console_in,
         )
 
     def GetLoadedKeys(self):
