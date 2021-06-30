@@ -425,8 +425,8 @@ class Config:
 
 
 def FindIdentityInList(
-    elements: Iterable[str], identities: Iterable[Tuple[str, str]]
-) -> Optional[str]:
+    elements: Iterable[str], identities: Iterable[Tuple[str, Union[str, Iterable[str]]]]
+) -> Union[None, str, Iterable[str]]:
     """Matches a list of identities to a list of elements.
 
     Args:
@@ -445,7 +445,7 @@ def FindIdentityInList(
     return None
 
 
-def FindIdentity(argv: Iterable[str], config: Config) -> str:
+def FindIdentities(argv: Iterable[str], config: Config) -> List[str]:
     """Returns the identity to use based on current directory or argv.
 
     Args:
@@ -459,11 +459,14 @@ def FindIdentity(argv: Iterable[str], config: Config) -> str:
     paths = set(
         [os.getcwd(), os.path.abspath(os.getcwd()), os.path.normpath(os.getcwd())]
     )
-    return (
+    idents = (
         FindIdentityInList(argv, config.Get("MATCH_ARGV"))
         or FindIdentityInList(paths, config.Get("MATCH_PATH"))
         or config.Get("DEFAULT_IDENTITY")
     )
+    if isinstance(idents, str):
+        return [idents]
+    return list(idents)
 
 
 def FindKeys(identity: str, config: Config) -> KeysDict:
@@ -600,30 +603,33 @@ def GetSessionTty(mode: str = "r") -> Optional[IO[Any]]:
 class AgentManager:
     """Manages the ssh-agent for one identity."""
 
-    def __init__(self, identity: str, sshconfig: Optional[str], config: Config):
+    def __init__(
+        self, identity: str, config: Config, main_identity: Optional[str] = None
+    ):
         """Initializes an AgentManager object.
 
-      Args:
-        identity: string, identity the ssh-agent managed by this instance of
-            an AgentManager will control.
-        config: object implementing the Config interface, allows access to
-            the user configuration parameters.
+        Args:
+          identity: string, identity the ssh-agent managed by this instance of
+              an AgentManager will control.
+          config: object implementing the Config interface, allows access to
+              the user configuration parameters.
 
-      Attributes:
-        identity: same as above.
-        config: same as above.
-        agents_path: directory where the config of all agents is kept.
-        agent_file: the config of the agent corresponding to this identity.
+        Attributes:
+          identity: same as above.
+          config: same as above.
+          agent_file: the config of the agent corresponding to this identity.
 
-      Parameters:
-        DIR_AGENTS: used to compute agents_path.
-        BINARY_SSH: path to the ssh binary.
-      """
+        Parameters:
+          DIR_AGENTS: used to compute agents_path.
+          BINARY_SSH: path to the ssh binary.
+        """
         self.identity = identity
         self.config = config
-        self.ssh_config = sshconfig
-        self.agents_path = os.path.abspath(config.Get("DIR_AGENTS"))
-        self.agent_file = self.GetAgentFile(self.agents_path, self.identity)
+        self.ssh_config = FindSSHConfig(self.identity, self.config)
+        agents_path = os.path.abspath(config.Get("DIR_AGENTS"))
+        if main_identity is None:
+            main_identity = self.identity
+        self.agent_file = self.GetAgentFile(agents_path, main_identity)
 
     def LoadUnloadedKeys(self, keys: KeysDict) -> None:
         """Loads all the keys specified that are not loaded.
@@ -1009,15 +1015,19 @@ def main(argv: List[str]) -> NoReturn:
         logger.error(message, config.Get("BINARY_SSH"), argv[0])
         sys.exit(255)
     ParseCommandLine(argv, config)
-    identity = FindIdentity(argv, config)
-    keys = FindKeys(identity, config)
-    sshconfig = FindSSHConfig(identity, config)
-    agent = AgentManager(identity, sshconfig, config)
-
-    if not config.Get("SSH_BATCH_MODE"):
-        # do not load keys in BatchMode
-        agent.LoadUnloadedKeys(keys)
-    agent.RunSSH(argv[1:])
+    identities = FindIdentities(argv, config)
+    primary = identities[0]
+    primary_agent = AgentManager(primary, config)
+    configs: Dict[Optional[str], List[str]] = collections.defaultdict(list)
+    for identity in identities:
+        configs[config.Get("SSH_ADD_OPTIONS").get(identity, None)].append(identity)
+    for id_group in configs.values():
+        keys = {}
+        for identity in id_group:
+            keys.update(FindKeys(identity, config))
+        if not config.Get("SSH_BATCH_MODE"):
+            AgentManager(id_group[0], config, primary).LoadUnloadedKeys(keys)
+    primary_agent.RunSSH(argv[1:])
 
 
 if __name__ == "__main__":
