@@ -316,7 +316,6 @@ import distutils.spawn
 import errno
 import fcntl
 import getpass
-import glob
 import logging
 import os
 import re
@@ -734,7 +733,7 @@ class AgentManager:
                 raise OSError(
                     "Cannot create agents directory, try manually with "
                     "'mkdir -p {0}'".format(path)
-                )
+                ) from e
 
         # Use the hostname as part of the path just in case this is on NFS.
         agentfile = os.path.join(
@@ -949,7 +948,7 @@ def ParseCommandLine(argv: Iterable[str], config: Config) -> None:
     # This function may need a lot of refactoring if it is ever used for more
     # than checking for BatchMode for OpenSSH...
     binary = os.path.basename(config.Get("BINARY_SSH"))
-    if binary == "ssh" or binary == "scp":
+    if binary in ("ssh", "scp"):
         # OpenSSH accepts -o Options as well as -oOption,
         # so let's convert argv to the latter form first
         i = iter(argv)
@@ -964,7 +963,7 @@ def ParseCommandLine(argv: Iterable[str], config: Config) -> None:
             if re.match(re_batchmode, p):
                 config.Set("SSH_BATCH_MODE", True)
                 break
-            elif re.match(re_nobatchmode, p):
+            if re.match(re_nobatchmode, p):
                 config.Set("SSH_BATCH_MODE", False)
                 break
 
