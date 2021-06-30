@@ -341,7 +341,7 @@ class Config:
 
     defaults = {
         # Where to find the per-user configuration.
-        "FILE_USER_CONFIG": "$HOME/.ssh-ident",
+        "FILE_USER_CONFIG": "$HOME/.ssh/identrc",
         # Where to find all the identities for the user.
         "DIR_IDENTITIES": "$HOME/.ssh/identities",
         # Where to keep the information about each running agent.
