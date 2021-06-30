@@ -319,6 +319,7 @@ import getpass
 import logging
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -803,10 +804,7 @@ class AgentManager:
     @staticmethod
     def EscapeShellArguments(argv: Iterable[str]) -> str:
         """Escapes all arguments to the shell, returns a string."""
-        escaped = []
-        for arg in argv:
-            escaped.append("'{0}'".format(arg.replace("'", "'\"'\"'")))
-        return " ".join(escaped)
+        return " ".join(shlex.quote(arg) for arg in argv)
 
     @staticmethod
     def GetShellArgs() -> str:
