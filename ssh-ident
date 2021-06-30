@@ -359,6 +359,7 @@ class Config:
         # try to find the correct binary in PATH.
         "BINARY_SSH": None,
         "BINARY_DIR": None,
+        "BINARY_SSHPROXY": None,
         # Which identity to use by default if we cannot tell from
         # the current working directory and/or argv.
         "DEFAULT_IDENTITY": "$USER",
@@ -380,6 +381,7 @@ class Config:
         # valid values are: ERROR, WARNING, INFO, DEBUG (from logging)
         # use CRITICAL to disable ALL output (not recommended!)
         "VERBOSITY": logging.INFO,
+        "SSHPROXY_USER": {},
     }
 
     def __init__(self) -> None:
@@ -680,6 +682,25 @@ class AgentManager:
         """
         console_in = GetSessionTty("r")
         console_out = GetSessionTty("w")
+        keys = list(keys)
+
+        for key in keys.copy():
+            if "sshproxy" in os.path.basename(key):
+                binary = self.config.Get("BINARY_SSHPROXY")
+                if not binary:
+                    continue
+                user = self.config.Get("SSHPROXY_USER").get(
+                    self.identity, getpass.getuser()
+                )
+                self.RunShellCommandInAgent(
+                    self.agent_file,
+                    "{0} -u {1} -a -o {2}".format(binary, user, key),
+                    stdout=console_out,
+                    stdin=console_in,
+                )
+                keys.remove(key)
+        if not keys:
+            return
         keys = " ".join(keys)
         options = self.config.Get("SSH_ADD_OPTIONS").get(
             self.identity, self.config.Get("SSH_ADD_DEFAULT_OPTIONS")
