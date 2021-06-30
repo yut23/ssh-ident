@@ -312,6 +312,7 @@ CREDITS
 from __future__ import print_function
 
 import collections
+import datetime
 import distutils.spawn
 import errno
 import fcntl
@@ -320,13 +321,18 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import termios
 import textwrap
-from typing import IO, Any, Dict, Iterable, List, NoReturn, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import (IO, Any, Dict, Iterable, List, NoReturn, Optional, Tuple,
+                    Union)
 
+import requests
 
 logging.basicConfig(format="%(message)s", level=logging.DEBUG)
 logger = logging.getLogger("ssh-ident")
@@ -359,7 +365,6 @@ class Config:
         # try to find the correct binary in PATH.
         "BINARY_SSH": None,
         "BINARY_DIR": None,
-        "BINARY_SSHPROXY": None,
         # Which identity to use by default if we cannot tell from
         # the current working directory and/or argv.
         "DEFAULT_IDENTITY": "$USER",
@@ -381,7 +386,10 @@ class Config:
         # valid values are: ERROR, WARNING, INFO, DEBUG (from logging)
         # use CRITICAL to disable ALL output (not recommended!)
         "VERBOSITY": logging.INFO,
+        # Per-identity user for sshproxy.
         "SSHPROXY_USER": {},
+        # Additional arguments to `SshProxy.__init__()`, keyed by identity
+        "SSHPROXY_ARGS": {},
     }
 
     def __init__(self) -> None:
@@ -602,6 +610,107 @@ def GetSessionTty(mode: str = "r") -> Optional[IO[Any]]:
     return fd
 
 
+class SshProxyError(Exception):
+    pass
+
+
+@dataclass
+class SshProxy:
+    user: str
+    key_path: str
+    scope: Optional[str] = None  # opt_scope
+    account: Optional[str] = None  # opt_collab
+    proxy: Optional[str] = None  # opt_socks
+    url: str = "https://sshproxy.nersc.gov"
+
+    def GetKey(self) -> str:
+        """Returns the path to the certificate file."""
+        scope = "default"
+        data = ""
+        if self.account is not None:
+            if self.scope is None:
+                scope = "collab"
+                self.scope = self.account
+            data = '{"target_user": "' + self.account + '"}'
+
+        idfile = self.key_path
+        certfile = self.key_path + "-cert.pub"
+        pubfile = self.key_path + ".pub"
+        pw = getpass.getpass(f"Enter the password+OTP for {self.user}: ")
+        print()
+
+        r = requests.post(
+            self.url + "/create_pair/" + scope + "/", data=data, auth=(self.user, pw),
+        )
+        r.raise_for_status()
+        first_line = r.text.split("\n")[0].rstrip("\r")
+        if "Authentication failed. Failed login" in first_line:
+            logger.error("The sshproxy server said: %s", first_line)
+            logger.error(
+                "This usually means you did not enter the correct password or OTP"
+            )
+            raise SshProxyError(first_line)
+        if first_line != "-----BEGIN RSA PRIVATE KEY-----":
+            logger.error("Did not get in a proper ssh private key. Output was:")
+            logger.error("%s", r.text)
+            logger.error("Hopefully that's informative")
+            raise SshProxyError("Did not get in a proper ssh private key")
+
+        tmpdir = os.path.dirname(idfile)
+        tmpkey = tempfile.NamedTemporaryFile(prefix="key.", dir=tmpdir)
+        tmpcert = tempfile.NamedTemporaryFile(prefix="cert.", dir=tmpdir)
+        tmppub = tempfile.NamedTemporaryFile(prefix="pub.", dir=tmpdir)
+
+        tmpkey.write(r.content)
+        tmpkey.flush()
+        # extract the cert from the private key file
+        for line in r.content.splitlines(keepends=True):
+            if b"ssh-rsa" in line:
+                tmpcert.write(line)
+        tmpcert.flush()
+        # make sure the private key has proper permissions so ssh-keygen doesn't complain
+        os.chmod(tmpkey.name, 0o600)
+        # get the public key from the private key
+        subprocess.run(
+            ["ssh-keygen", "-y", "-f", tmpkey.name], stdout=tmppub, check=True
+        )
+
+        shutil.copy(tmpkey.name, idfile)
+        shutil.copy(tmpcert.name, certfile)
+        shutil.copy(tmppub.name, pubfile)
+
+        return certfile
+
+    @staticmethod
+    def GetTimeout(certfile: str) -> int:
+        """Returns the number of seconds until the certificate expires."""
+        # get the expiry time from the certificate
+        valid_seconds: Optional[int] = None
+        proc = subprocess.Popen(
+            ["ssh-keygen", "-L", "-f", certfile],
+            stdout=subprocess.PIPE,
+            universal_newlines=True,
+        )
+        assert proc.stdout is not None
+        for line in proc.stdout.readlines():
+            if "Valid:" in line:
+                expire_str = line.partition(" to ")[2].strip()
+                expire_time = datetime.datetime.strptime(
+                    expire_str, "%Y-%m-%dT%H:%M:%S"
+                )
+                diff = expire_time - datetime.datetime.now()
+                valid_seconds = int(diff.total_seconds())
+        if valid_seconds is None:
+            raise SshProxyError("Could not get expiry time from certificate")
+        if valid_seconds < 0:
+            raise SshProxyError(
+                "cert {} is expired or otherwise invalid. Expiration read as: {}".format(
+                    certfile, expire_time
+                )
+            )
+        return valid_seconds
+
+
 class AgentManager:
     """Manages the ssh-agent for one identity."""
 
@@ -686,15 +795,16 @@ class AgentManager:
 
         for key in keys.copy():
             if "sshproxy" in os.path.basename(key):
-                binary = self.config.Get("BINARY_SSHPROXY")
-                if not binary:
-                    continue
                 user = self.config.Get("SSHPROXY_USER").get(
                     self.identity, getpass.getuser()
                 )
+                kwargs = self.config.Get("SSHPROXY_ARGS").get(self.identity, {})
+                sshproxy = SshProxy(user, key, **kwargs)
+                certfile = sshproxy.GetKey()
+                valid_seconds = SshProxy.GetTimeout(certfile)
                 self.RunShellCommandInAgent(
                     self.agent_file,
-                    "{0} -u {1} -a -o {2}".format(binary, user, key),
+                    "ssh-add -t {0} {1}".format(valid_seconds, key),
                     stdout=console_out,
                     stdin=console_in,
                 )
@@ -1039,9 +1149,16 @@ def main(argv: List[str]) -> NoReturn:
     identities = FindIdentities(argv, config)
     primary = identities[0]
     primary_agent = AgentManager(primary, config)
-    configs: Dict[Optional[str], List[str]] = collections.defaultdict(list)
+    configs: Dict[
+        Tuple[Optional[str], Optional[str]], List[str]
+    ] = collections.defaultdict(list)
     for identity in identities:
-        configs[config.Get("SSH_ADD_OPTIONS").get(identity, None)].append(identity)
+        configs[
+            (
+                config.Get("SSH_ADD_OPTIONS").get(identity, None),
+                config.Get("SSHPROXY_USER").get(identity, None),
+            )
+        ].append(identity)
     for id_group in configs.values():
         keys = {}
         for identity in id_group:
