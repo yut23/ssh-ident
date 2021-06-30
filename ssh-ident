@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Start and use ssh-agent and load identities as necessary.
 
 Use this script to start ssh-agents and load ssh keys on demand,
@@ -325,21 +325,18 @@ import subprocess
 import sys
 import termios
 import textwrap
+from typing import IO, Any, Dict, Iterable, List, NoReturn, Optional, Tuple, Union
 
-# # constants so noone has deal with cryptic numbers
-# LOG_CONSTANTS = {"LOG_ERROR": 1, "LOG_WARN": 2, "LOG_INFO": 3, "LOG_DEBUG": 4}
-# # load them directly into the global scope, for easy use
-# # not exactly pretty...
-# globals().update(LOG_CONSTANTS)
 
 logging.basicConfig(format="%(message)s", level=logging.DEBUG)
 logger = logging.getLogger("ssh-ident")
 logger.setLevel(logging.INFO)
 
 
+KeysDict = Dict[str, Dict[str, str]]
 
 
-class Config(object):
+class Config:
     """Holds and loads users configurations."""
 
     defaults = {
@@ -385,13 +382,13 @@ class Config(object):
         "VERBOSITY": logging.INFO,
     }
 
-    def __init__(self):
-        self.values = {}
+    def __init__(self) -> None:
+        self.values: Dict[str, Any] = {}
 
-    def Load(self):
+    def Load(self) -> "Config":
         """Load configurations from the default user file."""
         path = self.Get("FILE_USER_CONFIG")
-        variables = {}
+        variables: Dict[str, Any] = {}
         try:
             exec(compile(open(path).read(), path, "exec"), None, variables)
         except IOError:
@@ -400,13 +397,13 @@ class Config(object):
         return self
 
     @staticmethod
-    def Expand(value):
+    def Expand(value: Any) -> Any:
         """Expand environment variables or ~ in string parameters."""
         if isinstance(value, str):
             return os.path.expanduser(os.path.expandvars(value))
         return value
 
-    def Get(self, parameter):
+    def Get(self, parameter: str) -> Any:
         """Returns the value of a parameter, or causes the script to exit."""
         if parameter in os.environ:
             return self.Expand(os.environ[parameter])
@@ -422,12 +419,14 @@ class Config(object):
         )
         sys.exit(2)
 
-    def Set(self, parameter, value):
+    def Set(self, parameter: str, value: Any) -> None:
         """Sets configuration option parameter to value."""
         self.values[parameter] = value
 
 
-def FindIdentityInList(elements, identities):
+def FindIdentityInList(
+    elements: Iterable[str], identities: Iterable[Tuple[str, str]]
+) -> Optional[str]:
     """Matches a list of identities to a list of elements.
 
     Args:
@@ -446,7 +445,7 @@ def FindIdentityInList(elements, identities):
     return None
 
 
-def FindIdentity(argv, config):
+def FindIdentity(argv: Iterable[str], config: Config) -> str:
     """Returns the identity to use based on current directory or argv.
 
     Args:
@@ -467,7 +466,7 @@ def FindIdentity(argv, config):
     )
 
 
-def FindKeys(identity, config):
+def FindKeys(identity: str, config: Config) -> KeysDict:
     """Finds all the private and public keys associated with an identity.
 
     Args:
@@ -489,7 +488,7 @@ def FindKeys(identity, config):
         directories.append(os.path.expanduser("~/.ssh"))
 
     pattern = re.compile(config.Get("PATTERN_KEYS"))
-    found = collections.defaultdict(dict)
+    found: Dict[str, Dict[str, str]] = collections.defaultdict(dict)
     for directory in directories:
         try:
             keyfiles = os.listdir(directory)
@@ -526,7 +525,7 @@ def FindKeys(identity, config):
     return found
 
 
-def FindSSHConfig(identity, config):
+def FindSSHConfig(identity: str, config: Config) -> Optional[str]:
     """Finds a config file if there's one associated with an identity
 
     Args:
@@ -540,7 +539,7 @@ def FindSSHConfig(identity, config):
     directories = [os.path.join(config.Get("DIR_IDENTITIES"), identity)]
 
     pattern = re.compile(config.Get("PATTERN_CONFIG"))
-    sshconfigs = collections.defaultdict(dict)
+    # sshconfigs = collections.defaultdict(dict)
     for directory in directories:
         try:
             sshconfigs = os.listdir(directory)
@@ -554,10 +553,10 @@ def FindSSHConfig(identity, config):
             if os.path.isfile(sshconfig) and pattern.search(sshconfig):
                 return sshconfig
 
-    return False
+    return None
 
 
-def GetSessionTty(mode = "r"):
+def GetSessionTty(mode: str = "r") -> Optional[IO[Any]]:
     """Returns a file descriptor for the session TTY, or None.
 
     In *nix systems, each process is tied to one session. Each
@@ -598,10 +597,10 @@ def GetSessionTty(mode = "r"):
     return fd
 
 
-class AgentManager(object):
+class AgentManager:
     """Manages the ssh-agent for one identity."""
 
-    def __init__(self, identity, sshconfig, config):
+    def __init__(self, identity: str, sshconfig: Optional[str], config: Config):
         """Initializes an AgentManager object.
 
       Args:
@@ -626,7 +625,7 @@ class AgentManager(object):
         self.agents_path = os.path.abspath(config.Get("DIR_AGENTS"))
         self.agent_file = self.GetAgentFile(self.agents_path, self.identity)
 
-    def LoadUnloadedKeys(self, keys):
+    def LoadUnloadedKeys(self, keys: KeysDict) -> None:
         """Loads all the keys specified that are not loaded.
 
         Args:
@@ -643,7 +642,7 @@ class AgentManager(object):
         else:
             logger.info("All keys already loaded")  # , file=sys.stderr)
 
-    def FindUnloadedKeys(self, keys):
+    def FindUnloadedKeys(self, keys: KeysDict) -> Iterable[str]:
         """Determines which keys have not been loaded yet.
 
         Args:
@@ -654,7 +653,7 @@ class AgentManager(object):
         """
         loaded = set(self.GetLoadedKeys())
         toload = set()
-        for key, config in keys.items():
+        for _key, config in keys.items():
             if "pub" not in config:
                 continue
             if "priv" not in config:
@@ -667,7 +666,7 @@ class AgentManager(object):
             toload.add(config["priv"])
         return toload
 
-    def LoadKeyFiles(self, keys):
+    def LoadKeyFiles(self, keys: Iterable[str]) -> None:
         """Load all specified keys.
 
         Args:
@@ -686,7 +685,7 @@ class AgentManager(object):
             stdin=console_in,
         )
 
-    def GetLoadedKeys(self):
+    def GetLoadedKeys(self) -> Iterable[str]:
         """Returns an iterable of strings, each the fingerprint of a loaded key."""
         retval, stdout = self.RunShellCommandInAgent(self.agent_file, "ssh-add -l")
         if retval != 0:
@@ -701,10 +700,10 @@ class AgentManager(object):
                 continue
         return fingerprints
 
-    @staticmethod
-    def GetPublicKeyFingerprint(key):
+    @classmethod
+    def GetPublicKeyFingerprint(cls, key: str) -> Optional[str]:
         """Returns the fingerprint of a public key as a string."""
-        retval, stdout = AgentManager.RunShellCommand(
+        retval, stdout = cls.RunShellCommand(
             "ssh-keygen -l -f {0} |tr -s ' '".format(key)
         )
         if retval:
@@ -716,8 +715,8 @@ class AgentManager(object):
             return None
         return fingerprint
 
-    @staticmethod
-    def GetAgentFile(path, identity):
+    @classmethod
+    def GetAgentFile(cls, path: str, identity: str) -> str:
         """Returns the path to an agent config file.
 
         Args:
@@ -741,7 +740,7 @@ class AgentManager(object):
         agentfile = os.path.join(
             path, "agent-{0}-{1}".format(identity, socket.gethostname())
         )
-        if os.access(agentfile, os.R_OK) and AgentManager.IsAgentFileValid(agentfile):
+        if os.access(agentfile, os.R_OK) and cls.IsAgentFileValid(agentfile):
             logger.debug(
                 "Agent for identity %s ready",
                 identity,
@@ -754,15 +753,15 @@ class AgentManager(object):
             identity,
             # file=sys.stderr,
         )
-        retval = subprocess.call(
+        _retval = subprocess.call(
             ["/usr/bin/env", "-i", "/bin/sh", "-c", "ssh-agent > {0}".format(agentfile)]
         )
         return agentfile
 
-    @staticmethod
-    def IsAgentFileValid(agentfile):
+    @classmethod
+    def IsAgentFileValid(cls, agentfile: str) -> bool:
         """Returns true if the specified agentfile refers to a running agent."""
-        retval, output = AgentManager.RunShellCommandInAgent(
+        retval, _output = cls.RunShellCommandInAgent(
             agentfile, "ssh-add -l >/dev/null 2>/dev/null"
         )
         if retval & 0xFF not in [0, 1]:
@@ -774,42 +773,51 @@ class AgentManager(object):
             return False
         return True
 
-    @staticmethod
-    def RunShellCommand(command):
+    @classmethod
+    def RunShellCommand(
+        cls,
+        command: str,
+        stdin: Union[None, int, IO[bytes]] = None,
+        stdout: Union[None, int, IO[bytes]] = subprocess.PIPE,
+    ) -> Tuple[int, bytes]:
         """Runs a shell command, returns (status, stdout), (int, string)."""
-        command = ["/bin/sh", "-c", command]
-        process = subprocess.Popen(command, stdout=subprocess.PIPE)
-        stdout, stderr = process.communicate()
-        return process.wait(), stdout
+        cmd = ["/bin/sh", cls.GetShellArgs(), command]
+        process = subprocess.Popen(cmd, stdin=stdin, stdout=stdout)
+        out, _err = process.communicate()
+        return process.wait(), out
 
-    @staticmethod
-    def RunShellCommandInAgent(agentfile, command, stdin=None, stdout=subprocess.PIPE):
+    @classmethod
+    def RunShellCommandInAgent(
+        cls,
+        agentfile: str,
+        command: str,
+        stdin: Union[None, int, IO[bytes]] = None,
+        stdout: Union[None, int, IO[bytes]] = subprocess.PIPE,
+    ) -> Tuple[int, bytes]:
         """Runs a shell command with an agent configured in the environment."""
-        command = [
-            "/bin/sh",
-            "-c",
+        return cls.RunShellCommand(
             ". {0} >/dev/null 2>/dev/null; {1}".format(agentfile, command),
-        ]
-        process = subprocess.Popen(command, stdin=stdin, stdout=stdout)
-        stdout, stderr = process.communicate()
-        return process.wait(), stdout
+            stdin=stdin,
+            stdout=stdout,
+        )
 
     @staticmethod
-    def EscapeShellArguments(argv):
+    def EscapeShellArguments(argv: Iterable[str]) -> str:
         """Escapes all arguments to the shell, returns a string."""
         escaped = []
         for arg in argv:
             escaped.append("'{0}'".format(arg.replace("'", "'\"'\"'")))
         return " ".join(escaped)
 
-    def GetShellArgs(self):
+    @staticmethod
+    def GetShellArgs() -> str:
         """Returns the flags to be passed to the shell to run a command."""
         shell_args = "-c"
         if logger.isEnabledFor(logging.DEBUG):
             shell_args = "-xc"
         return shell_args
 
-    def RunSSH(self, argv):
+    def RunSSH(self, argv: Iterable[str]) -> NoReturn:
         """Execs ssh with the specified arguments."""
         additional_flags = self.config.Get("SSH_OPTIONS").get(
             self.identity, self.config.Get("SSH_DEFAULT_OPTIONS")
@@ -830,7 +838,7 @@ class AgentManager(object):
         os.execv("/bin/sh", command)
 
 
-def AutodetectBinary(argv, config):
+def AutodetectBinary(argv: List[str], config: Config) -> None:
     """Detects the correct binary to run and sets BINARY_SSH accordingly,
     if it is not already set."""
     # If BINARY_SSH is set by the user, respect that and do nothing.
@@ -843,6 +851,7 @@ def AutodetectBinary(argv, config):
 
     # If BINARY_DIR is set, look for the binary in this directory.
     runtime_name = argv[0]
+    binary_path: Optional[str]
     if config.Get("BINARY_DIR"):
         binary_name = os.path.basename(runtime_name)
         binary_path = os.path.join(config.Get("BINARY_DIR"), binary_name)
@@ -934,7 +943,7 @@ def AutodetectBinary(argv, config):
         sys.exit(255)
 
 
-def ParseCommandLine(argv, config):
+def ParseCommandLine(argv: Iterable[str], config: Config) -> None:
     """Parses the command line parameters in argv
     and modifies config accordingly."""
     # This function may need a lot of refactoring if it is ever used for more
@@ -960,7 +969,7 @@ def ParseCommandLine(argv, config):
                 break
 
 
-def main(argv):
+def main(argv: List[str]) -> NoReturn:
     # Replace stdout and stderr with /dev/tty, so we don't mess up with scripts
     # that use ssh in case we error out or similar.
     try:
@@ -1011,11 +1020,11 @@ def main(argv):
     if not config.Get("SSH_BATCH_MODE"):
         # do not load keys in BatchMode
         agent.LoadUnloadedKeys(keys)
-    return agent.RunSSH(argv[1:])
+    agent.RunSSH(argv[1:])
 
 
 if __name__ == "__main__":
     try:
-        sys.exit(main(sys.argv))
+        main(sys.argv)
     except KeyboardInterrupt:
         logger.debug("Goodbye")  # , file=sys.stderr)
