@@ -636,11 +636,28 @@ class SshProxy:
         idfile = self.key_path
         certfile = self.key_path + "-cert.pub"
         pubfile = self.key_path + ".pub"
+
+        if (
+            os.path.exists(idfile)
+            and os.path.exists(certfile)
+            and os.path.exists(pubfile)
+        ):
+            # check the current key expiration
+            try:
+                timeout = self.GetTimeout(certfile)
+                if timeout > 0:
+                    # existing key is valid
+                    return certfile
+            except SshProxyError:
+                pass
+
         pw = getpass.getpass(f"Enter the password+OTP for {self.user}: ")
         print()
 
         r = requests.post(
-            self.url + "/create_pair/" + scope + "/", data=data, auth=(self.user, pw),
+            self.url + "/create_pair/" + scope + "/",
+            data=data,
+            auth=(self.user, pw),
         )
         r.raise_for_status()
         first_line = r.text.split("\n")[0].rstrip("\r")
