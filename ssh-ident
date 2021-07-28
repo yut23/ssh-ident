@@ -332,8 +332,6 @@ from dataclasses import dataclass
 from typing import (IO, Any, Dict, Iterable, List, NoReturn, Optional, Tuple,
                     Union)
 
-import requests
-
 logging.basicConfig(format="%(message)s", level=logging.DEBUG)
 logger = logging.getLogger("ssh-ident")
 logger.setLevel(logging.INFO)
@@ -625,6 +623,10 @@ class SshProxy:
 
     def GetKey(self) -> str:
         """Returns the path to the certificate file."""
+        # This lets the rest of the script run without errors if requests isn't available
+        # pylint: disable=import-outside-toplevel
+        import requests
+
         scope = "default"
         data = ""
         if self.account is not None:
