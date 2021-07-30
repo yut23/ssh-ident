@@ -216,6 +216,11 @@ def FindKeys(identity: str, config: Config) -> KeysDict:
                 if match in key:
                     found[key.replace(match, "")][kind] = key
 
+    if "sshproxy" in identity and not found:
+        name = "sshproxy_rsa"
+        key = os.path.join(directories[0], name)
+        found[key]["priv"] = key
+        found[key]["pub"] = key + ".pub"
     if not found:
         logger.warning(
             "Warning: no keys found for identity %s in:",
