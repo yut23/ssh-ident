@@ -329,8 +329,7 @@ import tempfile
 import termios
 import textwrap
 from dataclasses import dataclass
-from typing import (IO, Any, Dict, Iterable, List, NoReturn, Optional, Tuple,
-                    Union)
+from typing import IO, Any, Dict, Iterable, List, NoReturn, Optional, Tuple, Union
 
 logging.basicConfig(format="%(message)s", level=logging.DEBUG)
 logger = logging.getLogger("ssh-ident")
@@ -657,9 +656,7 @@ class SshProxy:
         print()
 
         r = requests.post(
-            self.url + "/create_pair/" + scope + "/",
-            data=data,
-            auth=(self.user, pw),
+            self.url + "/create_pair/" + scope + "/", data=data, auth=(self.user, pw),
         )
         r.raise_for_status()
         first_line = r.text.split("\n")[0].rstrip("\r")
