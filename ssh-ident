@@ -21,7 +21,18 @@ import tempfile
 import termios
 import textwrap
 from dataclasses import dataclass
-from typing import IO, Any, Dict, Iterable, List, NoReturn, Optional, Tuple, Union
+from typing import (
+    IO,
+    Any,
+    Dict,
+    Iterable,
+    List,
+    NoReturn,
+    Optional,
+    Tuple,
+    Union,
+    Mapping,
+)
 
 logging.basicConfig(format="%(message)s", level=logging.DEBUG)
 logger = logging.getLogger("ssh-ident")
@@ -79,6 +90,7 @@ class Config:
         "SSHPROXY_USER": {},
         # Additional arguments to `SshProxy.__init__()`, keyed by identity
         "SSHPROXY_ARGS": {},
+        "AUTOTMUX": True,
     }
 
     def __init__(self) -> None:
@@ -682,7 +694,16 @@ class AgentManager:
                 self.EscapeShellArguments(argv),
             ),
         ]
-        os.execv("/bin/sh", command)
+        environ: Mapping[str, str] = os.environ
+        if not self.config.Get("AUTOTMUX"):
+            # append ".notmux" to $TERM, which will be passed to the remote server
+            logger.debug("Appending .notmux to $TERM")
+            if "TERM" not in environ:
+                logger.error("Error: $TERM is not set, could not disable auto-tmux")
+                sys.exit(3)
+            environ = os.environ.copy()
+            environ["TERM"] += ".notmux"
+        os.execve("/bin/sh", command, environ)
 
 
 def AutodetectBinary(argv: List[str], config: Config) -> None:
@@ -790,9 +811,9 @@ def AutodetectBinary(argv: List[str], config: Config) -> None:
         sys.exit(255)
 
 
-def ParseCommandLine(argv: Iterable[str], config: Config) -> None:
-    """Parses the command line parameters in argv
-    and modifies config accordingly."""
+def ParseCommandLine(argv: List[str], config: Config) -> List[str]:
+    """Parses the command line parameters in argv and modifies config accordingly.
+    Returns the new argv, to be passed to ssh."""
     # This function may need a lot of refactoring if it is ever used for more
     # than checking for BatchMode for OpenSSH...
     binary = os.path.basename(config.Get("BINARY_SSH"))
@@ -800,20 +821,27 @@ def ParseCommandLine(argv: Iterable[str], config: Config) -> None:
         # OpenSSH accepts -o Options as well as -oOption,
         # so let's convert argv to the latter form first
         i = iter(argv)
-        argv = [p + next(i, "") if p == "-o" else p for p in i]
+        parsed_argv = [p + next(i, "") if p == "-o" else p for p in i]
         # OpenSSH accepts 'Option=yes' and 'Option yes', 'true' instead of 'yes'
         # and treats everything case-insensitive
         # if an option is given multiple times,
         # OpenSSH considers the first occurrence only
         re_batchmode = re.compile(r"-oBatchMode[= ](yes|true)", re.IGNORECASE)
         re_nobatchmode = re.compile(r"-oBatchMode[= ](no|false)", re.IGNORECASE)
-        for p in argv:
+        re_notmux = re.compile(r"--no-?(?:auto)?tmux$")
+        for p in parsed_argv:
             if re.match(re_batchmode, p):
                 config.Set("SSH_BATCH_MODE", True)
                 break
             if re.match(re_nobatchmode, p):
                 config.Set("SSH_BATCH_MODE", False)
                 break
+    new_argv = argv.copy()
+    for p in argv:
+        if re.match(re_notmux, p):
+            config.Set("AUTOTMUX", False)
+            new_argv.remove(p)
+    return new_argv
 
 
 def main(argv: List[str]) -> NoReturn:
@@ -858,7 +886,7 @@ def main(argv: List[str]) -> NoReturn:
         )
         logger.error(message, config.Get("BINARY_SSH"), argv[0])
         sys.exit(255)
-    ParseCommandLine(argv, config)
+    argv = ParseCommandLine(argv, config)
     identities = FindIdentities(argv, config)
     primary = identities[0]
     primary_agent = AgentManager(primary, config)
