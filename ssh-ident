@@ -20,7 +20,6 @@ import sys
 import tempfile
 import termios
 import textwrap
-from dataclasses import dataclass
 from typing import (
     IO,
     Any,
@@ -320,14 +319,22 @@ class SshProxyError(Exception):
     pass
 
 
-@dataclass
 class SshProxy:
-    user: str
-    key_path: str
-    scope: Optional[str] = None  # opt_scope
-    account: Optional[str] = None  # opt_collab
-    proxy: Optional[str] = None  # opt_socks
-    url: str = "https://sshproxy.nersc.gov"
+    def __init__(
+        self,
+        user: str,
+        key_path: str,
+        scope: Optional[str] = None,  # opt_scope
+        account: Optional[str] = None,  # opt_collab
+        proxy: Optional[str] = None,  # opt_socks
+        url: str = "https://sshproxy.nersc.gov",
+    ):
+        self.user = user
+        self.key_path = key_path
+        self.scope = scope
+        self.account = account
+        self.proxy = proxy
+        self.url = url
 
     def GetKey(self) -> str:
         """Returns the path to the certificate file."""
