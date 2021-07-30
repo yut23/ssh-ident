@@ -26,11 +26,11 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Mapping,
     NoReturn,
     Optional,
     Tuple,
     Union,
-    Mapping,
 )
 
 logging.basicConfig(format="%(message)s", level=logging.DEBUG)
@@ -372,7 +372,9 @@ class SshProxy:
         print()
 
         r = requests.post(
-            self.url + "/create_pair/" + scope + "/", data=data, auth=(self.user, pw),
+            self.url + "/create_pair/" + scope + "/",
+            data=data,
+            auth=(self.user, pw),
         )
         r.raise_for_status()
         first_line = r.text.split("\n")[0].rstrip("\r")
