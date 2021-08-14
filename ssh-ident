@@ -701,14 +701,15 @@ class AgentManager:
             ),
         ]
         environ = os.environ  # type: Mapping[str, str]
-        if not self.config.Get("AUTOTMUX"):
-            # append ".notmux" to $TERM, which will be passed to the remote server
-            logger.debug("Appending .notmux to $TERM")
+        if self.config.Get("OVERRIDE_AUTOTMUX") is not None:
+            # append ".autotmux-[yn]" to $TERM, which will be passed to the remote server
+            logger.debug("Appending auto-tmux setting to $TERM")
             if "TERM" not in environ:
-                logger.error("Error: $TERM is not set, could not disable auto-tmux")
+                logger.error("Error: $TERM is not set, could not override auto-tmux")
                 sys.exit(3)
             environ = os.environ.copy()
-            environ["TERM"] += ".notmux"
+            val = "y" if self.config.Get("OVERRIDE_AUTOTMUX") else "n"
+            environ["TERM"] += ".autotmux-" + val
         os.execve("/bin/sh", command, environ)
 
 
@@ -834,7 +835,6 @@ def ParseCommandLine(argv: List[str], config: Config) -> List[str]:
         # OpenSSH considers the first occurrence only
         re_batchmode = re.compile(r"-oBatchMode[= ](yes|true)", re.IGNORECASE)
         re_nobatchmode = re.compile(r"-oBatchMode[= ](no|false)", re.IGNORECASE)
-        re_notmux = re.compile(r"--no-?(?:auto)?tmux$")
         for p in parsed_argv:
             if re.match(re_batchmode, p):
                 config.Set("SSH_BATCH_MODE", True)
@@ -843,10 +843,16 @@ def ParseCommandLine(argv: List[str], config: Config) -> List[str]:
                 config.Set("SSH_BATCH_MODE", False)
                 break
     new_argv = argv.copy()
-    for p in argv:
-        if re.match(re_notmux, p):
-            config.Set("AUTOTMUX", False)
-            new_argv.remove(p)
+    if binary == "ssh":
+        for p in argv:
+            if p == "--notmux":
+                config.Set("OVERRIDE_AUTOTMUX", False)
+                new_argv.remove(p)
+                break
+            if p == "--tmux":
+                config.Set("OVERRIDE_AUTOTMUX", True)
+                new_argv.remove(p)
+                break
     return new_argv
 
 
