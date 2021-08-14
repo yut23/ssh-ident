@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Start and use ssh-agent and load identities as necessary."""
+# compatible with Python 3.5+
 
 from __future__ import print_function
 
@@ -89,16 +90,16 @@ class Config:
         "SSHPROXY_USER": {},
         # Additional arguments to `SshProxy.__init__()`, keyed by identity
         "SSHPROXY_ARGS": {},
-        "AUTOTMUX": True,
+        "OVERRIDE_AUTOTMUX": None,
     }
 
     def __init__(self) -> None:
-        self.values: Dict[str, Any] = {}
+        self.values = {}  # type: Dict[str, Any]
 
     def Load(self) -> "Config":
         """Load configurations from the default user file."""
         path = self.Get("FILE_USER_CONFIG")
-        variables: Dict[str, Any] = {}
+        variables = {}  # type: Dict[str, Any]
         try:
             exec(compile(open(path).read(), path, "exec"), None, variables)
         except IOError:
@@ -201,7 +202,7 @@ def FindKeys(identity: str, config: Config) -> KeysDict:
         directories.append(os.path.expanduser("~/.ssh"))
 
     pattern = re.compile(config.Get("PATTERN_KEYS"))
-    found: Dict[str, Dict[str, str]] = collections.defaultdict(dict)
+    found = collections.defaultdict(dict)  # type: Dict[str, Dict[str, str]]
     for directory in directories:
         try:
             keyfiles = os.listdir(directory)
@@ -368,7 +369,7 @@ class SshProxy:
             except SshProxyError:
                 pass
 
-        pw = getpass.getpass(f"Enter the password+OTP for {self.user}: ")
+        pw = getpass.getpass("Enter the password+OTP for {}: ".format(self.user))
         print()
 
         r = requests.post(
@@ -419,7 +420,7 @@ class SshProxy:
     def GetTimeout(certfile: str) -> int:
         """Returns the number of seconds until the certificate expires."""
         # get the expiry time from the certificate
-        valid_seconds: Optional[int] = None
+        valid_seconds = None  # type: Optional[int]
         proc = subprocess.Popen(
             ["ssh-keygen", "-L", "-f", certfile],
             stdout=subprocess.PIPE,
@@ -703,7 +704,7 @@ class AgentManager:
                 self.EscapeShellArguments(argv),
             ),
         ]
-        environ: Mapping[str, str] = os.environ
+        environ = os.environ  # type: Mapping[str, str]
         if not self.config.Get("AUTOTMUX"):
             # append ".notmux" to $TERM, which will be passed to the remote server
             logger.debug("Appending .notmux to $TERM")
@@ -728,7 +729,7 @@ def AutodetectBinary(argv: List[str], config: Config) -> None:
 
     # If BINARY_DIR is set, look for the binary in this directory.
     runtime_name = argv[0]
-    binary_path: Optional[str]
+    binary_path = None  # type: Optional[str]
     if config.Get("BINARY_DIR"):
         binary_name = os.path.basename(runtime_name)
         binary_path = os.path.join(config.Get("BINARY_DIR"), binary_name)
@@ -899,9 +900,9 @@ def main(argv: List[str]) -> NoReturn:
     identities = FindIdentities(argv, config)
     primary = identities[0]
     primary_agent = AgentManager(primary, config)
-    configs: Dict[
-        Tuple[Optional[str], Optional[str]], List[str]
-    ] = collections.defaultdict(list)
+    configs = collections.defaultdict(
+        list
+    )  # type: Dict[Tuple[Optional[str], Optional[str]], List[str]]
     for identity in identities:
         configs[
             (
