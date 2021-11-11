@@ -101,7 +101,11 @@ class Config:
         path = self.Get("FILE_USER_CONFIG")
         variables = {}  # type: Dict[str, Any]
         try:
-            exec(compile(open(path).read(), path, "exec"), None, variables)
+            with open(path) as f:
+                contents = f.read()
+            exec(  # pylint: disable=exec-used
+                compile(contents, path, "exec"), None, variables
+            )
         except IOError:
             return self
         self.values = variables
@@ -309,7 +313,8 @@ def GetSessionTty(mode: str = "r") -> Optional[IO[Any]]:
     None otherwise.
     """
     try:
-        fd = open("/dev/tty", mode)
+        # this fd should not be closed
+        fd = open("/dev/tty", mode)  # pylint: disable=consider-using-with
         fcntl.ioctl(fd, termios.TIOCGPGRP, b"  ")
     except IOError:
         return None
@@ -369,9 +374,7 @@ class SshProxy:
         print()
 
         r = requests.post(
-            self.url + "/create_pair/" + scope + "/",
-            data=data,
-            auth=(self.user, pw),
+            self.url + "/create_pair/" + scope + "/", data=data, auth=(self.user, pw),
         )
         r.raise_for_status()
         first_line = r.text.split("\n")[0].rstrip("\r")
@@ -388,6 +391,7 @@ class SshProxy:
             raise SshProxyError("Did not get in a proper ssh private key")
 
         tmpdir = os.path.dirname(idfile)
+        # pylint: disable=consider-using-with
         tmpkey = tempfile.NamedTemporaryFile(prefix="key.", dir=tmpdir)
         tmpcert = tempfile.NamedTemporaryFile(prefix="cert.", dir=tmpdir)
         tmppub = tempfile.NamedTemporaryFile(prefix="pub.", dir=tmpdir)
@@ -409,6 +413,9 @@ class SshProxy:
         shutil.copy(tmpkey.name, idfile)
         shutil.copy(tmpcert.name, certfile)
         shutil.copy(tmppub.name, pubfile)
+        tmpkey.close()
+        tmpcert.close()
+        tmppub.close()
 
         return certfile
 
@@ -417,20 +424,20 @@ class SshProxy:
         """Returns the number of seconds until the certificate expires."""
         # get the expiry time from the certificate
         valid_seconds = None  # type: Optional[int]
-        proc = subprocess.Popen(
+        with subprocess.Popen(
             ["ssh-keygen", "-L", "-f", certfile],
             stdout=subprocess.PIPE,
             universal_newlines=True,
-        )
-        assert proc.stdout is not None
-        for line in proc.stdout.readlines():
-            if "Valid:" in line:
-                expire_str = line.partition(" to ")[2].strip()
-                expire_time = datetime.datetime.strptime(
-                    expire_str, "%Y-%m-%dT%H:%M:%S"
-                )
-                diff = expire_time - datetime.datetime.now()
-                valid_seconds = int(diff.total_seconds())
+        ) as proc:
+            assert proc.stdout is not None
+            for line in proc.stdout.readlines():
+                if "Valid:" in line:
+                    expire_str = line.partition(" to ")[2].strip()
+                    expire_time = datetime.datetime.strptime(
+                        expire_str, "%Y-%m-%dT%H:%M:%S"
+                    )
+                    diff = expire_time - datetime.datetime.now()
+                    valid_seconds = int(diff.total_seconds())
         if valid_seconds is None:
             raise SshProxyError("Could not get expiry time from certificate")
         if valid_seconds < 0:
@@ -650,7 +657,9 @@ class AgentManager:
     ) -> Tuple[int, bytes]:
         """Runs a shell command, returns (status, stdout), (int, string)."""
         cmd = ["/bin/sh", cls.GetShellArgs(), command]
-        process = subprocess.Popen(cmd, stdin=stdin, stdout=stdout)
+        process = subprocess.Popen(  # pylint: disable=consider-using-with
+            cmd, stdin=stdin, stdout=stdout
+        )
         out, _err = process.communicate()
         return process.wait(), out
 
@@ -860,6 +869,7 @@ def main(argv: List[str]) -> NoReturn:
     # Replace stdout and stderr with /dev/tty, so we don't mess up with scripts
     # that use ssh in case we error out or similar.
     try:
+        # pylint: disable=consider-using-with
         sys.stdout = open("/dev/tty", "w")
         sys.stderr = open("/dev/tty", "w")
     except IOError:
