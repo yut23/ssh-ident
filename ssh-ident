@@ -449,6 +449,33 @@ class SshProxy:
         return valid_seconds
 
 
+def EscapeShellArguments(argv: Iterable[str]) -> str:
+    """Escapes all arguments to the shell, returns a string."""
+    return " ".join(shlex.quote(arg) for arg in argv)
+
+
+def GetShellArgs() -> str:
+    """Returns the flags to be passed to the shell to run a command."""
+    shell_args = "-c"
+    if logger.isEnabledFor(logging.DEBUG):
+        shell_args = "-xc"
+    return shell_args
+
+
+def RunShellCommand(
+    command: str,
+    stdin: Union[None, int, IO[bytes]] = None,
+    stdout: Union[None, int, IO[bytes]] = subprocess.PIPE,
+) -> Tuple[int, bytes]:
+    """Runs a shell command, returns (status, stdout), (int, string)."""
+    cmd = ["/bin/sh", GetShellArgs(), command]
+    process = subprocess.Popen(  # pylint: disable=consider-using-with
+        cmd, stdin=stdin, stdout=stdout
+    )
+    out, _err = process.communicate()
+    return process.wait(), out
+
+
 class AgentManager:
     """Manages the ssh-agent for one identity."""
 
@@ -578,9 +605,7 @@ class AgentManager:
     @classmethod
     def GetPublicKeyFingerprint(cls, key: str) -> Optional[str]:
         """Returns the fingerprint of a public key as a string."""
-        retval, stdout = cls.RunShellCommand(
-            "ssh-keygen -l -f {0} |tr -s ' '".format(key)
-        )
+        retval, stdout = RunShellCommand("ssh-keygen -l -f {0} |tr -s ' '".format(key))
         if retval:
             return None
 
@@ -649,21 +674,6 @@ class AgentManager:
         return True
 
     @classmethod
-    def RunShellCommand(
-        cls,
-        command: str,
-        stdin: Union[None, int, IO[bytes]] = None,
-        stdout: Union[None, int, IO[bytes]] = subprocess.PIPE,
-    ) -> Tuple[int, bytes]:
-        """Runs a shell command, returns (status, stdout), (int, string)."""
-        cmd = ["/bin/sh", cls.GetShellArgs(), command]
-        process = subprocess.Popen(  # pylint: disable=consider-using-with
-            cmd, stdin=stdin, stdout=stdout
-        )
-        out, _err = process.communicate()
-        return process.wait(), out
-
-    @classmethod
     def RunShellCommandInAgent(
         cls,
         agentfile: str,
@@ -672,24 +682,11 @@ class AgentManager:
         stdout: Union[None, int, IO[bytes]] = subprocess.PIPE,
     ) -> Tuple[int, bytes]:
         """Runs a shell command with an agent configured in the environment."""
-        return cls.RunShellCommand(
+        return RunShellCommand(
             ". {0} >/dev/null 2>/dev/null; {1}".format(agentfile, command),
             stdin=stdin,
             stdout=stdout,
         )
-
-    @staticmethod
-    def EscapeShellArguments(argv: Iterable[str]) -> str:
-        """Escapes all arguments to the shell, returns a string."""
-        return " ".join(shlex.quote(arg) for arg in argv)
-
-    @staticmethod
-    def GetShellArgs() -> str:
-        """Returns the flags to be passed to the shell to run a command."""
-        shell_args = "-c"
-        if logger.isEnabledFor(logging.DEBUG):
-            shell_args = "-xc"
-        return shell_args
 
     def RunSSH(self, argv: Iterable[str]) -> NoReturn:
         """Execs ssh with the specified arguments."""
@@ -701,12 +698,12 @@ class AgentManager:
 
         command = [
             "/bin/sh",
-            self.GetShellArgs(),
+            GetShellArgs(),
             ". {0} >/dev/null 2>/dev/null; exec {1} {2} {3}".format(
                 self.agent_file,
                 self.config.Get("BINARY_SSH"),
                 additional_flags,
-                self.EscapeShellArguments(argv),
+                EscapeShellArguments(argv),
             ),
         ]
         environ = os.environ  # type: Mapping[str, str]
