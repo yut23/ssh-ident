@@ -706,16 +706,7 @@ class AgentManager:
                 EscapeShellArguments(argv),
             ),
         ]
-        environ = os.environ  # type: Mapping[str, str]
-        if self.config.Get("OVERRIDE_AUTOTMUX") is not None:
-            # append ".autotmux-[yn]" to $TERM, which will be passed to the remote server
-            logger.debug("Appending auto-tmux setting to $TERM")
-            if "TERM" not in environ:
-                logger.error("Error: $TERM is not set, could not override auto-tmux")
-                sys.exit(3)
-            environ = os.environ.copy()
-            val = "y" if self.config.Get("OVERRIDE_AUTOTMUX") else "n"
-            environ["TERM"] += ".autotmux-" + val
+        environ = GetSSHEnvironment(self.config)
         os.execve("/bin/sh", command, environ)
 
 
@@ -860,6 +851,20 @@ def ParseCommandLine(argv: List[str], config: Config) -> List[str]:
                 new_argv.remove(p)
                 break
     return new_argv
+
+
+def GetSSHEnvironment(config: Config) -> Mapping[str, str]:
+    environ = os.environ  # type: Mapping[str, str]
+    if config.Get("OVERRIDE_AUTOTMUX") is not None:
+        # append ".autotmux-[yn]" to $TERM, which will be passed to the remote server
+        logger.debug("Appending auto-tmux setting to $TERM")
+        if "TERM" not in environ:
+            logger.error("Error: $TERM is not set, could not override auto-tmux")
+            sys.exit(3)
+        environ = os.environ.copy()
+        val = "y" if config.Get("OVERRIDE_AUTOTMUX") else "n"
+        environ["TERM"] += ".autotmux-" + val
+    return environ
 
 
 def main(argv: List[str]) -> NoReturn:
