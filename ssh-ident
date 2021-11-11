@@ -4,6 +4,7 @@
 
 from __future__ import print_function
 
+import abc
 import collections
 import datetime
 import distutils.spawn
@@ -67,7 +68,7 @@ class Config:
         "BINARY_DIR": None,
         # Which identity to use by default if we cannot tell from
         # the current working directory and/or argv.
-        "DEFAULT_IDENTITY": "$USER",
+        "DEFAULT_IDENTITY": None,
         # Those should really be overridden by the user. Look
         # at the documentation for more details.
         "MATCH_PATH": [],
@@ -178,6 +179,7 @@ def FindIdentities(argv: Iterable[str], config: Config) -> List[str]:
         FindIdentityInList(argv, config.Get("MATCH_ARGV"))
         or FindIdentityInList(paths, config.Get("MATCH_PATH"))
         or config.Get("DEFAULT_IDENTITY")
+        or []
     )
     if isinstance(idents, str):
         return [idents]
@@ -476,7 +478,53 @@ def RunShellCommand(
     return process.wait(), out
 
 
-class AgentManager:
+class BaseManager(abc.ABC):
+    @abc.abstractmethod
+    def LoadUnloadedKeys(self, keys: KeysDict) -> None:
+        """Loads all the keys specified that are not loaded.
+
+        Args:
+          keys: dict as returned by FindKeys.
+        """
+
+    @abc.abstractmethod
+    def RunSSH(self, argv: Iterable[str]) -> NoReturn:
+        """Execs ssh with the specified arguments."""
+
+
+def GetManager(identity: Optional[str], config: Config) -> BaseManager:
+    if identity is None:
+        return NullManager(config)
+    return AgentManager(identity, config)
+
+
+class NullManager(BaseManager):
+    def __init__(self, config: Config):
+        """Initializes a NullManager object."""
+        self.config = config
+
+    def LoadUnloadedKeys(self, keys: KeysDict) -> None:
+        """Loads all the keys specified that are not loaded.
+
+        Args:
+          keys: dict as returned by FindKeys.
+        """
+        raise NotImplementedError("Null manager should never try to load keys")
+
+    def RunSSH(self, argv: Iterable[str]) -> NoReturn:
+        """Execs ssh with the specified arguments."""
+        additional_flags = self.config.Get("SSH_DEFAULT_OPTIONS")
+
+        command = [
+            self.config.Get("BINARY_SSH"),
+            *shlex.split(additional_flags),
+            *argv,
+        ]
+        environ = GetSSHEnvironment(self.config)
+        os.execve(command[0], command, environ)
+
+
+class AgentManager(BaseManager):
     """Manages the ssh-agent for one identity."""
 
     def __init__(
@@ -912,29 +960,32 @@ def main(argv: List[str]) -> NoReturn:
         sys.exit(255)
     argv = ParseCommandLine(argv, config)
     identities = FindIdentities(argv, config)
-    primary = identities[0]
-    primary_agent = AgentManager(primary, config)
-    configs = collections.defaultdict(
-        list
-    )  # type: Dict[Tuple[Optional[str], Optional[str]], List[str]]
-    for identity in identities:
-        configs[
-            (
-                config.Get("SSH_ADD_OPTIONS").get(identity, None),
-                config.Get("SSHPROXY_USER").get(identity, None),
-            )
-        ].append(identity)
-    for id_group in configs.values():
-        keys = {}
-        for identity in id_group:
-            keys.update(FindKeys(identity, config))
-        if not config.Get("SSH_BATCH_MODE"):
-            if id_group[0] == primary:
-                agent = primary_agent
-            else:
-                agent = AgentManager(id_group[0], config, primary)
-            agent.LoadUnloadedKeys(keys)
-    primary_agent.RunSSH(argv[1:])
+    if identities:
+        primary = identities[0]
+        primary_manager = AgentManager(primary, config)  # type: BaseManager
+        configs = collections.defaultdict(
+            list
+        )  # type: Dict[Tuple[Optional[str], Optional[str]], List[str]]
+        for identity in identities:
+            configs[
+                (
+                    config.Get("SSH_ADD_OPTIONS").get(identity, None),
+                    config.Get("SSHPROXY_USER").get(identity, None),
+                )
+            ].append(identity)
+        for id_group in configs.values():
+            keys = {}
+            for identity in id_group:
+                keys.update(FindKeys(identity, config))
+            if not config.Get("SSH_BATCH_MODE"):
+                if id_group[0] == primary:
+                    agent = primary_manager
+                else:
+                    agent = AgentManager(id_group[0], config, primary)
+                agent.LoadUnloadedKeys(keys)
+    else:
+        primary_manager = NullManager(config)
+    primary_manager.RunSSH(argv[1:])
 
 
 if __name__ == "__main__":
