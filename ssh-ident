@@ -7,7 +7,6 @@ from __future__ import print_function
 import abc
 import collections
 import datetime
-import distutils.spawn
 import errno
 import fcntl
 import getpass
@@ -836,10 +835,10 @@ def AutodetectBinary(argv: List[str], config: Config) -> None:
     search_path = os.pathsep.join([p for p in normalized_path if p != ssh_ident_path])
 
     # Find an executable with the desired name.
-    binary_path = distutils.spawn.find_executable(binary_name, search_path)
+    binary_path = shutil.which(binary_name, path=search_path)
     if not binary_path:
         # Nothing found. Try to find something named 'ssh'.
-        binary_path = distutils.spawn.find_executable("ssh")
+        binary_path = shutil.which("ssh")
 
     if binary_path:
         config.Set("BINARY_SSH", binary_path)
@@ -939,9 +938,9 @@ def main(argv: List[str]) -> NoReturn:
     # Note that this relies on argv[0] being set sensibly by the caller,
     # which is not always the case. argv[0] may also just have the binary
     # name if found in a path.
-    ssh_ident_path = distutils.spawn.find_executable(argv[0])
+    ssh_ident_path = shutil.which(argv[0])
     assert ssh_ident_path is not None, "bad argv[0]"
-    binary_path = distutils.spawn.find_executable(config.Get("BINARY_SSH"))
+    binary_path = shutil.which(config.Get("BINARY_SSH"))
     assert binary_path is not None, "BINARY_SSH must be set!"
     binary_path = os.path.realpath(binary_path)
     ssh_ident_path = os.path.realpath(ssh_ident_path)
