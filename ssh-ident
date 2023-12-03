@@ -893,8 +893,11 @@ def ParseCommandLine(argv: List[str], config: Config) -> List[str]:
                 config.Set("OVERRIDE_AUTOTMUX", False)
                 new_argv.remove(p)
                 break
-            if p == "--tmux":
-                config.Set("OVERRIDE_AUTOTMUX", True)
+            if p.startswith("--tmux"):
+                if p.startswith("--tmux="):
+                    config.Set("OVERRIDE_AUTOTMUX", p[len("--tmux=") :])
+                else:
+                    config.Set("OVERRIDE_AUTOTMUX", True)
                 new_argv.remove(p)
                 break
     return new_argv
@@ -903,13 +906,17 @@ def ParseCommandLine(argv: List[str], config: Config) -> List[str]:
 def GetSSHEnvironment(config: Config) -> Mapping[str, str]:
     environ = os.environ  # type: Mapping[str, str]
     if config.Get("OVERRIDE_AUTOTMUX") is not None:
-        # append ".autotmux-[yn]" to $TERM, which will be passed to the remote server
+        # append ".autotmux-[yn]" or ".autotmux-y-<session name>" to $TERM,
+        # which will be passed to the remote server
         logger.debug("Appending auto-tmux setting to $TERM")
         if "TERM" not in environ:
             logger.error("Error: $TERM is not set, could not override auto-tmux")
             sys.exit(3)
         environ = os.environ.copy()
-        val = "y" if config.Get("OVERRIDE_AUTOTMUX") else "n"
+        value = config.Get("OVERRIDE_AUTOTMUX")
+        val = "y" if value else "n"
+        if isinstance(value, str):
+            val += "-" + value
         environ["TERM"] += ".autotmux-" + val
     return environ
 
